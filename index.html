@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧果蠅監控系統 - 即時數據儀表板</title>
+    
+    <!-- 引入 Chart.js 函式庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- ===== CSS 樣式區 ===== -->
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', '微軟正黑體', sans-serif;
+            background-color: #1a1a2e;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #4a4e69;
+            padding-bottom: 10px;
+        }
+
+        h1 {
+            color: #a2d2ff;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background-color: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .live-data h2 {
+            text-align: center;
+            margin-top: 0;
+            color: #fca311;
+        }
+
+        .live-data #live-count {
+            font-size: 80px;
+            font-weight: bold;
+            text-align: center;
+            color: #ffffff;
+            margin: 10px 0;
+            text-shadow: 0 0 10px #fca311;
+        }
+
+        .device-status ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .device-status li {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+
+        .status-ok {
+            color: #9ef01a;
+            font-weight: bold;
+        }
+        .status-id, #last-update {
+            color: #a2d2ff;
+        }
+
+        .chart-container {
+            grid-column: 1 / -1; /* 圖表佔滿整行 */
+        }
+
+        .project-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .project-info img {
+            width: 100%;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>智慧果蠅監控系統 - 即時數據儀表板</h1>
+    </header>
+
+    <main>
+        <div class="dashboard">
+            <!-- 核心數據區 -->
+            <div class="card live-data">
+                <h2>今日累積捕獲總數</h2>
+                <p id="live-count">125</p>
+            </div>
+
+            <!-- 設備狀態區 -->
+            <div class="card device-status">
+                <h2>設備狀態</h2>
+                <ul>
+                    <li>連線狀態：<span class="status-ok">正常 ✅</span></li>
+                    <li>感測器ID：<span class="status-id">FF-TRAP-001</span></li>
+                    <li>上次更新時間：<span id="last-update">--:--:--</span></li>
+                </ul>
+            </div>
+
+            <!-- 數據圖表區 -->
+            <div class="card chart-container">
+                <h2>24小時捕獲趨勢圖</h2>
+                <canvas id="fruit-fly-chart"></canvas>
+            </div>
+        </div>
+
+        <div class="project-info">
+            <div class="card">
+                <h2>專案簡介</h2>
+                <p>本專案設計一套自動化東方果實蠅誘引計數模組，透過結合 IoT 技術與雲端數據分析，實現對害蟲的實時監測與數據分析，協助農民準確掌握害蟲動態，推動精準農業發展。</p>
+            </div>
+            <div class="card">
+                <h2>硬體實物</h2>
+                <!-- 
+                    ↓↓↓ 重要！請將下面的 src 換成你自己的照片檔名 ↓↓↓
+                    例如：<img src="my_trap.jpg" alt="果蠅捕蟲罐實物圖"> 
+                -->
+                <img src="https://i.imgur.com/uRov34g.png" alt="果蠅捕蟲罐示意圖">
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>期末專題報告 - [你的名字] - [你的學號]</p>
+    </footer>
+
+    <!-- ===== JavaScript 程式碼區 ===== -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // 獲取HTML元素
+            const liveCountElement = document.getElementById('live-count');
+            const lastUpdateElement = document.getElementById('last-update');
+            const ctx = document.getElementById('fruit-fly-chart').getContext('2d');
+
+            // 初始化捕獲數量
+            let currentCount = 125; // 可以從一個初始值開始
+            liveCountElement.textContent = currentCount;
+
+            // Chart.js 圖表設定
+            const chart = new Chart(ctx, {
+                type: 'line', // 折線圖
+                data: {
+                    labels: [], // X軸：時間標籤
+                    datasets: [{
+                        label: '累積捕獲數量',
+                        data: [], // Y軸：數據
+                        borderColor: '#a2d2ff',
+                        backgroundColor: 'rgba(162, 210, 255, 0.2)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4 // 讓線條更平滑
+                    }]
+                },
+                options: {
+                    scales: {
+                        y: {
+                            beginAtZero: false, // Y軸不一定從0開始
+                            ticks: { color: '#e0e0e0', font: { size: 14 } },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        },
+                        x: {
+                            ticks: { color: '#e0e0e0', font: { size: 14 } },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { 
+                                color: '#e0e0e0',
+                                font: {
+                                    size: 16
+                                }
+                             }
+                        }
+                    }
+                }
+            });
+
+            // 模擬數據更新的函數
+            function simulateData() {
+                // 1. 模擬新的捕獲事件 (每次增加 0 到 5 隻)
+                const newCatches = Math.floor(Math.random() * 6);
+                if (newCatches > 0) {
+                    currentCount += newCatches;
+                }
+                
+                // 2. 更新儀表板上的數字和時間
+                liveCountElement.textContent = currentCount;
+                const now = new Date();
+                lastUpdateElement.textContent = now.toLocaleTimeString('it-IT'); // 用 24 小時制 hh:mm:ss
+
+                // 3. 更新圖表數據
+                // 新增時間標籤
+                chart.data.labels.push(now.toLocaleTimeString('it-IT'));
+                // 新增數據點
+                chart.data.datasets[0].data.push(currentCount);
+
+                // 4. 保持圖表只顯示最新的 20 筆數據 (滑動窗口效果)
+                const maxDataPoints = 20;
+                if (chart.data.labels.length > maxDataPoints) {
+                    chart.data.labels.shift(); // 移除最舊的時間標籤
+                    chart.data.datasets[0].data.shift(); // 移除最舊的數據點
+                }
+
+                // 5. 重新繪製圖表
+                chart.update();
+            }
+
+            // 頁面載入後先跑一次，避免一開始是空的
+            simulateData();
+
+            // 設定計時器，每 3 秒模擬一次數據更新
+            setInterval(simulateData, 3000); // 3000 毫秒 = 3 秒
+        });
+    </script>
+</body>
+</html>
