@@ -79,6 +79,36 @@
         .chart-container {
             grid-column: 1 / -1; /* 圖表佔滿整行 */
         }
+        
+        .time-selector {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .time-selector button {
+            background-color: #4a4e69;
+            color: #e0e0e0;
+            border: 1px solid #a2d2ff;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .time-selector button:hover {
+            background-color: #a2d2ff;
+            color: #16213e;
+        }
+        
+        .time-selector button.active {
+            background-color: #fca311;
+            color: #16213e;
+            border-color: #fca311;
+            font-weight: bold;
+        }
 
         .project-info {
             display: grid;
@@ -88,8 +118,10 @@
 
         .project-info img {
             width: 100%;
+            height: auto;
             border-radius: 8px;
             margin-top: 10px;
+            object-fit: cover;
         }
 
         footer {
@@ -109,8 +141,8 @@
         <div class="dashboard">
             <!-- 核心數據區 -->
             <div class="card live-data">
-                <h2>今日累積捕獲總數</h2>
-                <p id="live-count">125</p>
+                <h2 id="live-count-title">當前累積捕獲總數</h2>
+                <p id="live-count">--</p>
             </div>
 
             <!-- 設備狀態區 -->
@@ -125,7 +157,11 @@
 
             <!-- 數據圖表區 -->
             <div class="card chart-container">
-                <h2>24小時捕獲趨勢圖</h2>
+                <div class="time-selector">
+                    <button id="btn-24h" class="active">過去 24 小時</button>
+                    <button id="btn-7d">過去 7 天</button>
+                </div>
+                <h2 id="chart-title">24小時捕獲趨勢圖</h2>
                 <canvas id="fruit-fly-chart"></canvas>
             </div>
         </div>
@@ -137,11 +173,7 @@
             </div>
             <div class="card">
                 <h2>硬體實物</h2>
-                <!-- 
-                    ↓↓↓ 重要！請將下面的 src 換成你自己的照片檔名 ↓↓↓
-                    例如：<img src="my_trap.jpg" alt="果蠅捕蟲罐實物圖"> 
-                -->
-                <img src="https://i.imgur.com/uRov34g.png" alt="果蠅捕蟲罐示意圖">
+                <img src="https://i.imgur.com/R3sOU8W.jpeg" alt="果蠅捕蟲罐實物圖">
             </div>
         </div>
     </main>
@@ -153,90 +185,235 @@
     <!-- ===== JavaScript 程式碼區 ===== -->
     <script>
         document.addEventListener('DOMContentLoaded', function () {
-            // 獲取HTML元素
+            // ===== 全域變數與元素獲取 =====
             const liveCountElement = document.getElementById('live-count');
+            const liveCountTitle = document.getElementById('live-count-title');
             const lastUpdateElement = document.getElementById('last-update');
+            const chartTitleElement = document.getElementById('chart-title');
             const ctx = document.getElementById('fruit-fly-chart').getContext('2d');
+            const btn24h = document.getElementById('btn-24h');
+            const btn7d = document.getElementById('btn-7d');
 
-            // 初始化捕獲數量
-            let currentCount = 125; // 可以從一個初始值開始
-            liveCountElement.textContent = currentCount;
+            let chart;
+            let liveUpdateInterval;
+            let currentView = '24h';
 
-            // Chart.js 圖表設定
-            const chart = new Chart(ctx, {
-                type: 'line', // 折線圖
-                data: {
-                    labels: [], // X軸：時間標籤
-                    datasets: [{
-                        label: '累積捕獲數量',
-                        data: [], // Y軸：數據
-                        borderColor: '#a2d2ff',
-                        backgroundColor: 'rgba(162, 210, 255, 0.2)',
-                        borderWidth: 2,
-                        fill: true,
-                        tension: 0.4 // 讓線條更平滑
-                    }]
-                },
-                options: {
-                    scales: {
-                        y: {
-                            beginAtZero: false, // Y軸不一定從0開始
-                            ticks: { color: '#e0e0e0', font: { size: 14 } },
-                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
-                        },
-                        x: {
-                            ticks: { color: '#e0e0e0', font: { size: 14 } },
-                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            labels: { 
-                                color: '#e0e0e0',
-                                font: {
-                                    size: 16
-                                }
-                             }
-                        }
+            const CACHE_KEY_7D = 'fruitFlyData7d';
+            const CACHE_KEY_24H = 'fruitFlyData24h';
+            
+            // ===== 快取管理 =====
+            function saveDataToCache(key, data) {
+                const cacheData = {
+                    timestamp: new Date().toISOString(), // 存儲時間戳
+                    data: data
+                };
+                localStorage.setItem(key, JSON.stringify(cacheData));
+            }
+
+            function loadDataFromCache(key) {
+                const cached = localStorage.getItem(key);
+                if (!cached) return null;
+
+                const { timestamp, data } = JSON.parse(cached);
+                const cacheDate = new Date(timestamp);
+                const now = new Date();
+
+                // 7天數據：每天更新一次即可
+                if (key === CACHE_KEY_7D) {
+                    if (cacheDate.toDateString() === now.toDateString()) {
+                        return data; // 快取有效
                     }
                 }
-            });
-
-            // 模擬數據更新的函數
-            function simulateData() {
-                // 1. 模擬新的捕獲事件 (每次增加 0 到 5 隻)
-                const newCatches = Math.floor(Math.random() * 6);
-                if (newCatches > 0) {
-                    currentCount += newCatches;
-                }
                 
-                // 2. 更新儀表板上的數字和時間
-                liveCountElement.textContent = currentCount;
-                const now = new Date();
-                lastUpdateElement.textContent = now.toLocaleTimeString('it-IT'); // 用 24 小時制 hh:mm:ss
-
-                // 3. 更新圖表數據
-                // 新增時間標籤
-                chart.data.labels.push(now.toLocaleTimeString('it-IT'));
-                // 新增數據點
-                chart.data.datasets[0].data.push(currentCount);
-
-                // 4. 保持圖表只顯示最新的 20 筆數據 (滑動窗口效果)
-                const maxDataPoints = 20;
-                if (chart.data.labels.length > maxDataPoints) {
-                    chart.data.labels.shift(); // 移除最舊的時間標籤
-                    chart.data.datasets[0].data.shift(); // 移除最舊的數據點
+                // 24小時數據：5分鐘內有效，避免頻繁切換時重新生成
+                if (key === CACHE_KEY_24H) {
+                    const FIVE_MINUTES = 5 * 60 * 1000;
+                    if (now.getTime() - cacheDate.getTime() < FIVE_MINUTES) {
+                        return data; // 快取有效
+                    }
                 }
 
-                // 5. 重新繪製圖表
+                return null; // 快取過期
+            }
+
+
+            // ===== 圖表初始化 =====
+            function initializeChart() {
+                if (chart) chart.destroy();
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: [], datasets: [{ label: '累積捕獲數量', data: [], borderColor: '#a2d2ff', backgroundColor: 'rgba(162, 210, 255, 0.2)', borderWidth: 2, fill: true, tension: 0.1 }] },
+                    options: {
+                        scales: {
+                            y: { beginAtZero: true, ticks: { color: '#e0e0e0', font: { size: 14 } }, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                            x: { ticks: { color: '#e0e0e0', font: { size: 14 } }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                        },
+                        plugins: { legend: { labels: { color: '#e0e0e0', font: { size: 16 } } } },
+                        animation: { duration: 500 }
+                    }
+                });
+            }
+
+            // ===== 數據模擬核心邏輯 =====
+            function getFlyActivity(hour) {
+                if (hour >= 8 && hour < 18) return 2 + Math.random() * 4;
+                else if (hour >= 6 && hour < 8 || hour >= 18 && hour < 20) return 0.5 + Math.random() * 1.5;
+                else return Math.random() * 0.5;
+            }
+            
+            function generatePast24HoursData() {
+                let cachedData = loadDataFromCache(CACHE_KEY_24H);
+                if (cachedData) return cachedData;
+
+                const labels = [];
+                const data = [];
+                const endTime = new Date();
+                let cumulativeCount = 0;
+                let dayStartTime = new Date();
+
+                if (dayStartTime.getHours() >= 16) {
+                    dayStartTime.setHours(16, 0, 0, 0);
+                } else {
+                    dayStartTime.setDate(dayStartTime.getDate() - 1);
+                    dayStartTime.setHours(16, 0, 0, 0);
+                }
+
+                for (let time = new Date(dayStartTime.getTime()); time <= endTime; time.setMinutes(time.getMinutes() + 30)) {
+                    if (time.getHours() === 16 && time.getMinutes() === 0 && time.getTime() !== dayStartTime.getTime()) {
+                        cumulativeCount = 0;
+                    }
+                    cumulativeCount += getFlyActivity(time.getHours());
+                    if (endTime.getTime() - time.getTime() <= 24 * 60 * 60 * 1000) {
+                        labels.push(time.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }));
+                        data.push(Math.round(cumulativeCount));
+                    }
+                }
+                const generatedData = { labels, data };
+                saveDataToCache(CACHE_KEY_24H, generatedData);
+                return generatedData;
+            }
+
+            function generatePast7DaysData() {
+                let cachedData = loadDataFromCache(CACHE_KEY_7D);
+                if (cachedData) return cachedData;
+
+                const labels = [];
+                const data = [];
+                const today = new Date();
+                for (let i = 6; i >= 0; i--) {
+                    const date = new Date(today);
+                    date.setDate(today.getDate() - i);
+                    labels.push(`${date.getMonth() + 1}/${date.getDate()}`);
+                    data.push(100 + Math.floor(Math.random() * 81));
+                }
+                const generatedData = { labels, data };
+                saveDataToCache(CACHE_KEY_7D, generatedData);
+                return generatedData;
+            }
+
+            // ===== 更新儀表板與圖表 =====
+            function updateDashboard() {
+                clearInterval(liveUpdateInterval);
+
+                if (currentView === '24h') {
+                    const { labels, data } = generatePast24HoursData();
+                    chart.data.labels = labels;
+                    chart.data.datasets[0].data = data;
+                    chart.data.datasets[0].label = '累積捕獲數量';
+                    chart.options.scales.y.beginAtZero = true;
+                    
+                    liveCountTitle.textContent = '當前累積捕獲總數';
+                    liveCountElement.textContent = data.length > 0 ? data[data.length - 1] : 0;
+                    lastUpdateElement.textContent = new Date().toLocaleTimeString('it-IT');
+                    chartTitleElement.textContent = '24小時捕獲趨勢圖';
+                    
+                    liveUpdateInterval = setInterval(simulateLiveUpdate, 5000); // 每5秒模擬一次更新
+
+                } else if (currentView === '7d') {
+                    const { labels, data } = generatePast7DaysData();
+                    chart.data.labels = labels;
+                    chart.data.datasets[0].data = data;
+                    chart.data.datasets[0].label = '每日捕獲總數';
+                    chart.options.scales.y.beginAtZero = false;
+                    
+                    liveCountTitle.textContent = '近7日平均捕獲數';
+                    const average = Math.round(data.reduce((a, b) => a + b, 0) / data.length);
+                    liveCountElement.textContent = average;
+                    lastUpdateElement.textContent = 'N/A';
+                    chartTitleElement.textContent = '近7日捕獲總量圖';
+                }
                 chart.update();
             }
 
-            // 頁面載入後先跑一次，避免一開始是空的
-            simulateData();
+            function simulateLiveUpdate() {
+                if (currentView !== '24h' || chart.data.labels.length === 0) return;
 
-            // 設定計時器，每 3 秒模擬一次數據更新
-            setInterval(simulateData, 3000); // 3000 毫秒 = 3 秒
+                const now = new Date();
+                const lastLabel = chart.data.labels[chart.data.labels.length - 1];
+                const [lastHour, lastMinute] = lastLabel.split(':').map(Number);
+                const lastLabelTime = new Date(now);
+                lastLabelTime.setHours(lastHour, lastMinute, 0, 0);
+
+                const THIRTY_MINUTES = 30 * 60 * 1000;
+
+                // 檢查是否跨越了半小時
+                if (now.getTime() - lastLabelTime.getTime() >= THIRTY_MINUTES) {
+                    // 跨越了，新增一個數據點
+                    const newLabel = now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                    let lastCount = parseInt(liveCountElement.textContent);
+                    
+                    // 檢查是否下午4點歸零
+                    if (now.getHours() === 16 && now.getMinutes() < 30) {
+                        lastCount = 0;
+                    }
+
+                    const newCount = lastCount + Math.round(getFlyActivity(now.getHours()) / 6); // 新區間的第一筆捕獲
+
+                    chart.data.labels.push(newLabel);
+                    chart.data.datasets[0].data.push(newCount);
+                    liveCountElement.textContent = newCount;
+                    
+                    // 滑動窗口
+                    const maxDataPoints = 48; // 24h * 2
+                    if (chart.data.labels.length > maxDataPoints) {
+                        chart.data.labels.shift();
+                        chart.data.datasets[0].data.shift();
+                    }
+                } else {
+                    // 沒跨越，只更新最後一個數據點的值
+                    const newCatch = getFlyActivity(now.getHours()) / 6; // 更新頻率高，增量要小
+                    const dataArray = chart.data.datasets[0].data;
+                    const lastIndex = dataArray.length - 1;
+                    dataArray[lastIndex] += newCatch;
+                    const newTotal = Math.round(dataArray[lastIndex]);
+                    dataArray[lastIndex] = newTotal; // 更新回整數
+                    liveCountElement.textContent = newTotal;
+                }
+                
+                lastUpdateElement.textContent = now.toLocaleTimeString('it-IT');
+                chart.update('none'); // 無動畫更新，感覺更即時
+            }
+
+            // ===== 事件監聽器 =====
+            btn24h.addEventListener('click', () => {
+                if (currentView === '24h') return;
+                currentView = '24h';
+                btn24h.classList.add('active');
+                btn7d.classList.remove('active');
+                updateDashboard();
+            });
+
+            btn7d.addEventListener('click', () => {
+                if (currentView === '7d') return;
+                currentView = '7d';
+                btn7d.classList.add('active');
+                btn24h.classList.remove('active');
+                updateDashboard();
+            });
+
+            // ===== 頁面初始化 =====
+            initializeChart();
+            updateDashboard();
         });
     </script>
 </body>
