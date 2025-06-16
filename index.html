@@ -62,7 +62,7 @@
             </div>
         </div>
     </main>
-    <footer><p>期末專題報告 - 謝維勳  蘇柏誠</p></footer>
+    <footer><p>期末專題報告 - [你的名字] - [你的學號]</p></footer>
 
     <script>
     document.addEventListener('DOMContentLoaded', function () {
@@ -78,19 +78,19 @@
         let chart;
         let liveUpdateInterval;
         let currentView = '24h';
-        const MASTER_DATA_KEY = 'fruitFlyMasterData_v4'; // 使用新key避免舊快取
+        const MASTER_DATA_KEY = 'fruitFlyMasterData_v5'; // 使用新key避免舊快取
         let masterData = [];
 
         // ===== 數據模擬核心邏輯 =====
 
-        // 輔助函數：將時間對齊到最近的上一個半點或整點
         function snapToHalfHour(date) {
             const snappedDate = new Date(date);
             const minutes = snappedDate.getMinutes();
+            snappedDate.setSeconds(0, 0);
             if (minutes >= 30) {
-                snappedDate.setMinutes(30, 0, 0);
+                snappedDate.setMinutes(30);
             } else {
-                snappedDate.setMinutes(0, 0, 0);
+                snappedDate.setMinutes(0);
             }
             return snappedDate;
         }
@@ -100,63 +100,102 @@
             else if (hour >= 6 && hour < 8 || hour >= 18 && hour < 20) return 0.5 + Math.random() * 1.5;
             else return Math.random() * 0.5;
         }
-
+        
+        // 這是核心函數，現在會處理數據生成、快取、填補數據斷層和數據校準
         function getOrGenerateMasterData() {
             const cached = localStorage.getItem(MASTER_DATA_KEY);
+            let lastTimestamp = null;
+
             if (cached) {
                 const { timestamp, data } = JSON.parse(cached);
-                if (new Date(timestamp).toDateString() === new Date().toDateString()) {
-                    masterData = data.map(item => ({ ...item, timestamp: new Date(item.timestamp) }));
-                    return;
+                masterData = data.map(item => ({ ...item, timestamp: new Date(item.timestamp) }));
+                if (masterData.length > 0) {
+                    lastTimestamp = masterData[masterData.length - 1].timestamp;
                 }
             }
 
-            console.log("Generating new master data with snapped timestamps...");
-            masterData = [];
             const now = new Date();
-            const endTime = snapToHalfHour(now);
-            const startTime = snapToHalfHour(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+            const snappedNow = snapToHalfHour(now);
+            
+            // 檢查是否需要生成全新的數據
+            if (!lastTimestamp) {
+                console.log("Generating new master data...");
+                const startTime = snapToHalfHour(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+                for (let time = new Date(startTime.getTime()); time <= snappedNow; time.setMinutes(time.getMinutes() + 30)) {
+                    masterData.push({
+                        timestamp: new Date(time.getTime()),
+                        catch: getFlyActivity(time.getHours())
+                    });
+                }
+                
+                // 【解決方案 2】: 對生成的主數據進行一次性校準
+                calibrateMasterData();
 
-            for (let time = new Date(startTime.getTime()); time <= endTime; time.setMinutes(time.getMinutes() + 30)) {
-                masterData.push({
-                    timestamp: new Date(time.getTime()),
-                    catch: getFlyActivity(time.getHours())
-                });
+            } else { // 如果有舊數據，檢查並填補數據斷層
+                const timeDiff = snappedNow.getTime() - lastTimestamp.getTime();
+                if (timeDiff > 30 * 60 * 1000) {
+                    console.log(`Filling data gap of ${timeDiff / (60*1000)} minutes...`);
+                    for (let time = new Date(lastTimestamp.getTime() + 30 * 60 * 1000); time <= snappedNow; time.setMinutes(time.getMinutes() + 30)) {
+                         masterData.push({
+                            timestamp: new Date(time.getTime()),
+                            catch: getFlyActivity(time.getHours())
+                        });
+                    }
+                    // 注意：這裡不重新校準，以保持歷史數據的一致性
+                }
             }
+
             localStorage.setItem(MASTER_DATA_KEY, JSON.stringify({ timestamp: new Date().toISOString(), data: masterData }));
         }
 
-        // 處理「過去7天」數據 (新定義：每日16:00結算值)
+        function calibrateMasterData() {
+            const dailyTotals = {};
+            masterData.forEach(item => {
+                let dayKeyDate = new Date(item.timestamp);
+                if (item.timestamp.getHours() >= 16) {
+                    dayKeyDate.setDate(dayKeyDate.getDate() + 1);
+                }
+                const key = dayKeyDate.toLocaleDateString('fr-CA');
+                if (!dailyTotals[key]) dailyTotals[key] = 0;
+                dailyTotals[key] += item.catch;
+            });
+
+            const dailyValues = Object.values(dailyTotals);
+            if(dailyValues.length === 0) return;
+            const avg = dailyValues.reduce((sum, val) => sum + val, 0) / dailyValues.length;
+            const scaleFactor = (avg > 0) ? (140 / avg) : 1;
+            
+            console.log(`Average daily catch: ${avg.toFixed(2)}. Applying scale factor: ${scaleFactor.toFixed(2)}`);
+
+            masterData.forEach(item => {
+                item.catch *= scaleFactor;
+            });
+        }
+
         function process7DayData() {
             const dailyFinalCounts = [];
-            for (let i = 1; i <= 7; i++) { // 從昨天(i=1)到7天前(i=7)
+            for (let i = 1; i <= 7; i++) {
                 const targetDay = new Date();
                 targetDay.setDate(targetDay.getDate() - i);
                 
                 const cycleEnd = new Date(targetDay);
-                cycleEnd.setHours(16, 0, 0, 0); // 當天下午4點
+                cycleEnd.setHours(16, 0, 0, 0);
                 const cycleStart = new Date(cycleEnd);
-                cycleStart.setDate(cycleStart.getDate() - 1); // 從前一天下午4點開始
+                cycleStart.setDate(cycleStart.getDate() - 1);
 
                 const dayData = masterData.filter(item => item.timestamp >= cycleStart && item.timestamp < cycleEnd);
                 const total = dayData.reduce((sum, item) => sum + item.catch, 0);
                 
-                dailyFinalCounts.unshift({ // 從前面插入，保持日期順序
+                dailyFinalCounts.unshift({
                     label: `${targetDay.getMonth() + 1}/${targetDay.getDate()}`,
                     count: Math.round(total)
                 });
             }
-
-            // 調整數據使其總量合理
-            const avg = dailyFinalCounts.reduce((sum, item) => sum + item.count, 0) / 7;
-            const scaleFactor = (avg > 0) ? (140 / avg) : 1;
-            const data = dailyFinalCounts.map(item => Math.min(180, Math.max(100, Math.round(item.count * scaleFactor))));
             const labels = dailyFinalCounts.map(item => item.label);
-            
+            const data = dailyFinalCounts.map(item => item.count);
             return { labels, data };
         }
         
-        // 處理「過去24小時」數據
         function process24HourData() {
             const now = new Date();
             const endTime = snapToHalfHour(now);
@@ -182,9 +221,9 @@
             relevantData.forEach(item => {
                 const ts = item.timestamp;
                 if (ts.getHours() === 16 && ts.getMinutes() === 0) {
-                    const prevTimestamp = labels.length > 0 ? labels[labels.length - 1] : null;
-                    if (!prevTimestamp || !prevTimestamp.startsWith("16:00")) {
-                        cumulativeCount = 0;
+                    const prevTimestamp = labels.length > 0 ? new Date(relevantData[relevantData.indexOf(item)-1].timestamp) : null;
+                    if(!prevTimestamp || prevTimestamp.getHours() !== 16) {
+                       cumulativeCount = 0;
                     }
                 }
                 
@@ -196,13 +235,7 @@
             return { labels, data };
         }
 
-        // ===== 儀表板更新與繪製 =====
-        function initializeChart() { /* ... 內容不變 ... */ }
-        function updateDashboard() { /* ... 內容不變 ... */ }
-        function simulateLiveUpdate() { /* ... 內容不變 ... */ }
-
-        // --- 複製不變的函數 ---
-        initializeChart = function() {
+        function initializeChart() {
             if (chart) chart.destroy();
             chart = new Chart(ctx, {
                 type: 'line',
@@ -218,7 +251,7 @@
             });
         }
         
-        updateDashboard = function() {
+        function updateDashboard() {
             clearInterval(liveUpdateInterval);
             let dataToShow;
 
@@ -247,40 +280,38 @@
             chart.update();
         }
 
-        simulateLiveUpdate = function() {
+        // 【解決方案 1】: 修改即時更新邏輯，只使用整數
+        function simulateLiveUpdate() {
             if (currentView !== '24h') return;
 
             const now = new Date();
             const snappedNow = snapToHalfHour(now);
-            const lastDataPoint = masterData[masterData.length - 1];
+            const lastDataPointInMaster = masterData[masterData.length - 1];
 
-            if (snappedNow.getTime() > lastDataPoint.timestamp.getTime()) {
-                 const newCatch = getFlyActivity(snappedNow.getHours());
-                 masterData.push({ timestamp: snappedNow, catch: newCatch });
-                 localStorage.setItem(MASTER_DATA_KEY, JSON.stringify({ timestamp: new Date().toISOString(), data: masterData }));
+            // 檢查是否跨越了下一個半小時的間隔
+            if (snappedNow.getTime() > lastDataPointInMaster.timestamp.getTime()) {
+                 // 如果跨越了，就生成一個新的、完整的數據點，並重新繪製儀表板
+                 console.log("New half-hour interval detected. Adding new point to master data.");
+                 getOrGenerateMasterData(); // 這會自動填補數據
                  updateDashboard(); 
             } else {
-                const newCatch = getFlyActivity(now.getHours()) / 360; 
-                lastDataPoint.catch += newCatch;
-
-                const dataArray = chart.data.datasets[0].data;
-                const lastIndex = dataArray.length - 1;
-                if (lastIndex >= 0) {
-                  dataArray[lastIndex] += newCatch;
-                  const newTotal = Math.round(dataArray[lastIndex]);
-                  liveCountElement.textContent = newTotal;
+                // 如果仍在同一個半小時內，只模擬視覺上的增加
+                // 以20%的機率在5秒內增加1隻
+                if (Math.random() < 0.2) {
+                    const chartDataArray = chart.data.datasets[0].data;
+                    const lastIndex = chartDataArray.length - 1;
+                    if (lastIndex >= 0) {
+                        chartDataArray[lastIndex] += 1;
+                        lastDataPointInMaster.catch += 1; // 同時更新主數據源
+                        liveCountElement.textContent = chartDataArray[lastIndex];
+                        chart.update('none'); // 無動畫更新
+                    }
                 }
             }
-            
             lastUpdateElement.textContent = now.toLocaleTimeString('it-IT');
-            chart.update('none'); 
         }
 
         // ===== 事件監聽器 =====
-        btn24h.addEventListener('click', () => { /* ... 內容不變 ... */ });
-        btn7d.addEventListener('click', () => { /* ... 內容不變 ... */ });
-        
-        // --- 複製不變的監聽器 ---
         btn24h.addEventListener('click', () => {
             if (currentView === '24h') return;
             currentView = '24h';
@@ -299,7 +330,7 @@
 
         // ===== 頁面初始化 =====
         initializeChart();
-        getOrGenerateMasterData();
+        getOrGenerateMasterData(); // 核心函數，確保數據已生成、填補並校準
         updateDashboard();
     });
     </script>
